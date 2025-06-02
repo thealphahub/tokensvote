@@ -24,6 +24,52 @@ function saveVotes() {
   fs.writeFileSync(VOTES_FILE, JSON.stringify(votes));
 }
 
+// --- Helius logo fetcher (uses your API key, fast, safe for up to 30 tokens) ---
+const HELIUS_API_KEY = "9a7a98c9-018e-4ce1-95ea-97eb96cf2ac8";
+async function getLogoFromHelius(mint) {
+  try {
+    const url = `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`;
+    const body = {
+      jsonrpc: "2.0",
+      id: "1",
+      method: "getAsset",
+      params: { id: mint }
+    };
+
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify(body)
+    });
+    const data = await resp.json();
+
+    // Try standard metaplex v2 (preferred)
+    if (
+      data &&
+      data.result &&
+      data.result.content &&
+      data.result.content.links &&
+      data.result.content.links.image
+    ) {
+      return data.result.content.links.image;
+    }
+    // Try legacy metaplex
+    if (
+      data &&
+      data.result &&
+      data.result.content &&
+      data.result.content.metadata &&
+      data.result.content.metadata.image
+    ) {
+      return data.result.content.metadata.image;
+    }
+    return null;
+  } catch (e) {
+    return null; // Safe fallback
+  }
+}
+// --- End Helius logo fetcher ---
+
 app.get("/api/tokens-vote", async (req, res) => {
   try {
     // 1. Récupère les profils récents
@@ -50,18 +96,33 @@ app.get("/api/tokens-vote", async (req, res) => {
     const tokensData = await tokensResp.json();
 
     // 5. On filtre les tokens avec un volume 24h > 200 000$
-    const filtered = tokensData.filter(token =>
+    let filtered = tokensData.filter(token =>
       token.volume &&
       token.volume.h24 &&
       Number(token.volume.h24) > 200000
     );
 
-    // 6. Mapping élargi : va chercher les infos jusque dans baseToken/children
-    const tokens = filtered.map(token => {
+    // 6. Mapping élargi + fallback logo (async)
+    // Pour chaque token sans logo, on tente Helius
+    const tokens = [];
+    for (const token of filtered) {
       const profil = profilesMap[token.address] || {};
-      // baseToken peut exister dans certains cas
       const baseToken = token.baseToken || profil.baseToken || {};
-      return {
+      let logoURI =
+        token.icon ||
+        profil.icon ||
+        profil.logoURI ||
+        profil.logo ||
+        profil.baseToken?.icon ||
+        baseToken.icon ||
+        "";
+
+      // Si pas de logo, tente de récupérer via Helius (logo caché sur la blockchain)
+      if (!logoURI) {
+        logoURI = await getLogoFromHelius(token.address);
+      }
+
+      tokens.push({
         address: token.address,
         name:
           token.name ||
@@ -79,20 +140,13 @@ app.get("/api/tokens-vote", async (req, res) => {
           profil.baseToken?.symbol ||
           baseToken.symbol ||
           "",
-        logoURI:
-          token.icon ||
-          profil.icon ||
-          profil.logoURI ||
-          profil.logo ||
-          profil.baseToken?.icon ||
-          baseToken.icon ||
-          "",
+        logoURI: logoURI || "", // Met au moins "" si rien trouvé
         volume24h: token.volume?.h24 || 0,
         votes: votes[token.address] || 0,
         price: token.price || null,
         marketcap: token.fdv || null
-      };
-    });
+      });
+    }
 
     tokens.sort((a, b) => b.votes - a.votes);
 
