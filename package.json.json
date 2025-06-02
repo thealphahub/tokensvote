@@ -1,0 +1,13 @@
+{
+  "name": "tokens-vote",
+  "version": "1.0.0",
+  "main": "tokens-vote.js",
+  "type": "module",
+  "scripts": {
+    "start": "node tokens-vote.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "node-fetch": "^2.7.0"
+  }
+}
