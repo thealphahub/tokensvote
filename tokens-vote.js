@@ -6,13 +6,12 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 app.use(express.json());
 
-// --- CORS fix: allow requests from anywhere ---
+// --- CORS fix ---
 app.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
   next();
 });
-// --- End CORS fix ---
 
 let votes = {};
 
@@ -24,7 +23,7 @@ function saveVotes() {
   fs.writeFileSync(VOTES_FILE, JSON.stringify(votes));
 }
 
-// --- Helius logo fetcher (uses your API key, fast, safe for up to 30 tokens) ---
+// --- Helius logo fetcher ---
 const HELIUS_API_KEY = "9a7a98c9-018e-4ce1-95ea-97eb96cf2ac8";
 async function getLogoFromHelius(mint) {
   try {
@@ -38,12 +37,12 @@ async function getLogoFromHelius(mint) {
 
     const resp = await fetch(url, {
       method: "POST",
-      headers: {"Content-Type":"application/json"},
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body)
     });
     const data = await resp.json();
 
-    // Try standard metaplex v2 (preferred)
+    // Try standard metaplex v2
     if (
       data &&
       data.result &&
@@ -65,10 +64,22 @@ async function getLogoFromHelius(mint) {
     }
     return null;
   } catch (e) {
-    return null; // Safe fallback
+    return null;
   }
 }
-// --- End Helius logo fetcher ---
+
+// --- Solscan logo fetcher ---
+async function getLogoFromSolscan(mint) {
+  try {
+    const resp = await fetch(`https://api.solscan.io/token/meta?tokenAddress=${mint}`);
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    if (data && data.icon) return data.icon;
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
 
 app.get("/api/tokens-vote", async (req, res) => {
   try {
@@ -83,27 +94,24 @@ app.get("/api/tokens-vote", async (req, res) => {
 
     if (solanaTokens.length === 0) return res.json([]);
 
-    // 3. Mapping profil pour retrouver infos secondaires si besoin
+    // 3. Mapping profil
     const profilesMap = {};
     for (const t of solanaTokens) {
       profilesMap[t.tokenAddress] = t;
     }
 
-    // 4. Appel de /tokens/v1/solana/ avec toutes les adresses pour stats complètes
+    // 4. Détails Dexscreener
     const addresses = solanaTokens.map(token => token.tokenAddress);
     const tokensUrl = `https://api.dexscreener.com/tokens/v1/solana/${addresses.join(",")}`;
     const tokensResp = await fetch(tokensUrl);
     const tokensData = await tokensResp.json();
 
-    // 5. On filtre les tokens avec un volume 24h > 200 000$
+    // 5. Volume filter
     let filtered = tokensData.filter(token =>
-      token.volume &&
-      token.volume.h24 &&
-      Number(token.volume.h24) > 200000
+      token.volume && token.volume.h24 && Number(token.volume.h24) > 200000
     );
 
-    // 6. Mapping élargi + fallback logo (async)
-    // Pour chaque token sans logo, on tente Helius
+    // 6. Mapping + fallback logo multi-source
     const tokens = [];
     for (const token of filtered) {
       const profil = profilesMap[token.address] || {};
@@ -117,10 +125,14 @@ app.get("/api/tokens-vote", async (req, res) => {
         baseToken.icon ||
         "";
 
-      // Si pas de logo, tente de récupérer via Helius (logo caché sur la blockchain)
+      // Fallback Helius puis Solscan si toujours rien
       if (!logoURI) {
         logoURI = await getLogoFromHelius(token.address);
       }
+      if (!logoURI) {
+        logoURI = await getLogoFromSolscan(token.address);
+      }
+      // (Pas de placeholder ici car le front gère déjà ça)
 
       tokens.push({
         address: token.address,
@@ -140,7 +152,7 @@ app.get("/api/tokens-vote", async (req, res) => {
           profil.baseToken?.symbol ||
           baseToken.symbol ||
           "",
-        logoURI: logoURI || "", // Met au moins "" si rien trouvé
+        logoURI: logoURI || "", // le front peut mettre un placeholder si vide
         volume24h: token.volume?.h24 || 0,
         votes: votes[token.address] || 0,
         price: token.price || null,
