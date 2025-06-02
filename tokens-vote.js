@@ -6,6 +6,14 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 app.use(express.json());
 
+// --- CORS fix: allow requests from anywhere ---
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
+  next();
+});
+// --- End CORS fix ---
+
 let votes = {};
 
 const VOTES_FILE = "votes.json";
